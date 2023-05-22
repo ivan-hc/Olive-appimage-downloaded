@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+
+idnumber=$(echo $(wget -q https://www.olivevideoeditor.org/nightly.php -O -) >> olivenightly.txt; sed -i 's/zuluTime/\n/g' olivenightly.txt; cat olivenightly.txt | grep "php?id" | head -1 | grep -Eo '[0-9]{1,9}' | tail -1; rm -f olivenightly.txt)
+wget https://github.com/srevinsaju/Firefox-Appimage/releases/download/firefox-v98.0.r20220322144853/firefox-98.0.r20220322144853-x86_64.AppImage -O downloader
+mkdir downloader.home
+chmod a+x ./downloader
+timeout 60s ./downloader -headless https://www.olivevideoeditor.org/go.php?id=$idnumber
+unzip ./downloader.home/Downloads/*.zip
+if test -t ./downloader.home/Downloads/*AppImage
+then
+	mv downloader.home/Downloads/*AppImage .
+fi
