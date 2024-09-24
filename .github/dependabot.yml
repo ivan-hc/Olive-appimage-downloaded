@@ -1,0 +1,7 @@
+#This is a barebones config to only manage auto updates for gh workflow files
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "daily"
