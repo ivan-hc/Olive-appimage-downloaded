@@ -1,0 +1,124 @@
+name: ⏬ Fetch Olive AppImage 📀
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 12 * * 0-6"
+env:
+  GITHUB_TOKEN: "${{ github.token }}"
+#------------------------------------------------------------------------------------#
+jobs:
+    fetch-appimage:
+      name: Fetch Olive AppImage
+      runs-on: ubuntu-latest
+      permissions: write-all #Required for Releases and also to download Artifacts from GH Releases
+      
+      steps:
+        - name: Checkout repository
+          uses: actions/checkout@v4
+          with:
+            path: main
+            filter: "blob:none" #https://github.blog/2020-12-21-get-up-to-speed-with-partial-clone-and-shallow-clone/
+  
+        #Setup
+        - name: Install CoreUtils & Deps
+          run: |
+            #presets
+            set -x ; set +e
+            #-------------#     
+            export DEBIAN_FRONTEND="noninteractive"
+            sudo apt update -y -qq
+            sudo apt install coreutils curl findutils jq moreutils unzip wget -y -qq
+          continue-on-error: true
+
+        #Fetch
+        - name: Fetch AppImage (x86_64-Linux)
+          run: |
+            #presets
+            set -x ; set +e
+            #-------------#
+            #Setup Releases Dir
+            mkdir -p "/tmp/RELEASES"
+            pushd "$(mktemp -d)" >/dev/null 2>&1
+            #https://github.com/olive-editor/olive/actions/workflows/ci.yml
+            DOWNLOAD_URL="$(curl -qfsSL "https://api.github.com/repos/olive-editor/olive/actions/artifacts?per_page=100" -H "Authorization: Bearer ${GITHUB_TOKEN}" | jq -r '[.artifacts[] | select(.name | test("Linux-x86_64"))] | sort_by(.created_at) | .[].archive_download_url' | tail -n 1)" && export DOWNLOAD_URL="${DOWNLOAD_URL}"
+            #Created_Date
+            PKG_VERSION="$(curl -qfsSL "https://api.github.com/repos/olive-editor/olive/actions/artifacts?per_page=100" -H "Authorization: Bearer ${GITHUB_TOKEN}" | jq -r --arg url "${DOWNLOAD_URL}" '.artifacts[] | select(.archive_download_url == $url) | .created_at')" && export PKG_VERSION="${PKG_VERSION}"
+            echo "PKG_VERSION=${PKG_VERSION}" >> "${GITHUB_ENV}"
+            SNAPSHOT_VERSION="$(echo -n "${PKG_VERSION}" | tr -c '[:alnum:]' '_')" && export SNAPSHOT_VERSION="${SNAPSHOT_VERSION}"
+            echo "SNAPSHOT_VERSION=${SNAPSHOT_VERSION}" >> "${GITHUB_ENV}"
+            #Download
+            curl -qfsSL "${DOWNLOAD_URL}" -H "Authorization: Bearer ${GITHUB_TOKEN}" -o "./olive.zip" && unzip "./olive.zip"
+            find . -type f -iname '*olive*' ! -name '*.zip*' -exec cp {} "/tmp/RELEASES/" \;
+            find . -type f -iname '*olive*' ! -name '*.zip*' -exec cp {} "/tmp/RELEASES/olive-x86_64.AppImage" \;
+            cp "./olive.zip" "/tmp/RELEASES/olive-x86_64.zip"
+            cp "./olive.zip" "/tmp/RELEASES/olive-${PKG_VERSION}-x86_64.zip"
+            popd >/dev/null 2>&1
+            #Sanity Check
+            if [ -d "/tmp/RELEASES" ] && [ "$(find "/tmp/RELEASES" -mindepth 1 -print -quit 2>/dev/null)" ]; then
+                 cd "/tmp/RELEASES"
+                 find "./" -maxdepth 1 -type f ! -iname '*.txt' | xargs sha256sum | sort -u | tee "/tmp/RELEASES/SHA256SUM.txt"
+                 find "./" -maxdepth 1 -type f ! -iname '*.txt' | xargs file | sort -u | tee "/tmp/RELEASES/FILE.txt"
+                 find "./" -maxdepth 1 -type f ! -iname '*.txt' | xargs du -sh
+                 export HAS_RELEASE="TRUE"
+                 echo "HAS_RELEASE=$HAS_RELEASE" >> "${GITHUB_ENV}"
+                 UTC_TIME="$(TZ='UTC' date +'%Y_%m_%d')"
+                 echo "UTC_TIME=${UTC_TIME}" >> "${GITHUB_ENV}"
+              else
+                 export HAS_RELEASE="FALSE"
+                 echo "HAS_RELEASE=$HAS_RELEASE" >> "${GITHUB_ENV}"
+                 exit 1
+            fi
+          continue-on-error: true
+
+        - name: Create Body for Release
+          run: |
+            #presets
+            set +x ; set +e
+            #-------------#
+            echo -e "" >> "/tmp/RELEASE_NOTE.md"
+            echo '---' >> "/tmp/RELEASE_NOTE.md"
+            echo '```console' >> "/tmp/RELEASE_NOTE.md"
+            echo -e "" >> "/tmp/RELEASE_NOTE.md"
+            echo -e "[+] --> Metadata (Version: ${PKG_VERSION})" >> "/tmp/RELEASE_NOTE.md"
+            echo -e "" >> "/tmp/RELEASE_NOTE.md"
+            cat "/tmp/RELEASES/FILE.txt" >> "/tmp/RELEASE_NOTE.md"
+            echo -e "" >> "/tmp/RELEASE_NOTE.md"
+            echo -e "[+] --> SHA256SUM" >> "/tmp/RELEASE_NOTE.md"
+            echo -e "" >> "/tmp/RELEASE_NOTE.md"
+            cat "/tmp/RELEASES/SHA256SUM.txt" >> "/tmp/RELEASE_NOTE.md"
+            echo -e '```\n' >> "/tmp/RELEASE_NOTE.md"
+            echo -e "" >> "/tmp/RELEASE_NOTE.md"
+          continue-on-error: true
+
+        #Continuous Release
+        - name: Continuous Releaser
+          if: env.HAS_RELEASE == 'TRUE'
+          uses: softprops/action-gh-release@v2
+          with:
+            name: "Olive AppImage ${{ env.PKG_VERSION}}"
+            tag_name: "continuous"
+            prerelease: false
+            draft: false
+            generate_release_notes: false
+            make_latest: true
+            body_path: "/tmp/RELEASE_NOTE.md"
+            files: |
+              /tmp/RELEASES/*
+          continue-on-error: true
+
+      #Snapshot
+        - name: Snapshot Releaser
+          if: env.HAS_RELEASE == 'TRUE'
+          uses: softprops/action-gh-release@v2
+          with:
+            name: "[SNAPSHOT] Olive AppImage (${{ env.PKG_VERSION}})"
+            tag_name: "${{ env.SNAPSHOT_VERSION}}"
+            prerelease: false
+            draft: false
+            generate_release_notes: false
+            make_latest: false
+            body_path: "/tmp/RELEASE_NOTE.md"
+            files: |
+              /tmp/RELEASES/*
+          continue-on-error: true
+#------------------------------------------------------------------------------------#
